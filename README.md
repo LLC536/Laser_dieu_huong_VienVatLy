@@ -15,6 +15,3 @@
 **Phần mềm:**
 - Code máy tính (Python 3): Dùng `OpenCV` để lọc màu, nhận diện tia laser và tính toán ma trận Homography; dùng `PySerial` để gửi lệnh xuống Arduino.
 - Code Arduino (C++): Dùng thư viện `AccelStepper` và `MultiStepper` để nhận chuỗi tọa độ (ví dụ: `100,50`) và điều khiển motor chạy đến đích.
-
-## 3. Mục đích của Repository
-- Lưu trữ source code (Python & C++), tài liệu và báo cáo tổng kết trong quá trình thực tập đề tài.
