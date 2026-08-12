@@ -1,4 +1,3 @@
-=========================================================
 HƯỚNG DẪN CÀI ĐẶT VÀ CHẠY CODE HỆ THỐNG LASER ĐIỀU HƯỚNG
 =========================================================
 
@@ -41,8 +40,7 @@ HƯỚNG DẪN CÀI ĐẶT VÀ CHẠY CODE HỆ THỐNG LASER ĐIỀU HƯỚNG
 4. THAO TÁC SỬ DỤNG
 - Điều hướng: Click chuột trái vào bất kỳ điểm nào trên khung hình camera, tia laser sẽ tự động tính toán số bước motor và bắn tới vị trí đó.
 
-=========================================================
-⚠️ LƯU Ý QUAN TRỌNG KHI KẾT THÚC CHƯƠNG TRÌNH ⚠️
+⚠️ LƯU Ý QUAN TRỌNG KHI KẾT THÚC CHƯƠNG TRÌNH
 =========================================================
 Động cơ bước là hệ thống hở, nếu tắt ngang (mất điện), động cơ sẽ quên vị trí gốc. Do đó, để lần chạy sau hệ thống không bị lỗi tọa độ, BẮT BUỘC thực hiện thao tác tắt như sau:
 
