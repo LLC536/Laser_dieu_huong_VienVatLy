@@ -2,38 +2,38 @@ import cv2
 import numpy as np
 import serial
 import time
+import math
 
 # --- CẤU HÌNH HỆ THỐNG ---
 CONG_COM = 'COM6' 
 
 # --- HÀM TÌM TỌA ĐỘ LASER ---
 def tim_toa_do_laser(anh_dau_vao):
-    # 1. Chuyển sang ảnh xám theo logic gốc
+    # 1. Chuyển sang ảnh xám
     anh_xam = cv2.cvtColor(anh_dau_vao, cv2.COLOR_BGR2GRAY)
     
-    # 2. Bắt các điểm chói sáng (ngưỡng 245 rất chuẩn với ảnh này)
+    # 2. Bắt các điểm chói sáng (ngưỡng 245)
     _, mat_na_sang_nhat = cv2.threshold(anh_xam, 245, 255, cv2.THRESH_BINARY)
     
     # 3. Tìm danh sách các đốm sáng
     danh_sach_vien, _ = cv2.findContours(mat_na_sang_nhat, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if len(danh_sach_vien) > 0:
-        # CẢI TIẾN: Sắp xếp các viền từ lớn đến bé để kiểm tra lần lượt.
-        # Nếu dùng max(), lỡ có một mảng tường lóa sáng to hơn 400, hàm sẽ bỏ qua luôn tia laser nhỏ bé.
+        # Sắp xếp các viền từ lớn đến bé
         danh_sach_vien_sap_xep = sorted(danh_sach_vien, key=cv2.contourArea, reverse=True)
         
         for vien_laser in danh_sach_vien_sap_xep:
             dien_tich = cv2.contourArea(vien_laser)
             
-            # Lọc bằng diện tích (chuẩn logic của bạn)
-            if 10 < dien_tich < 400: 
+            # NỚI LỎNG: Diện tích từ 5 đến 1000 pixel đề phòng lóa hoặc laser nhỏ đi
+            if 5 < dien_tich < 1000: 
                 chu_vi_vien = cv2.arcLength(vien_laser, True)
                 
                 if chu_vi_vien > 0:
-                    # Lọc bằng độ tròn (chuẩn logic của bạn)
                     do_tron = 4 * np.pi * dien_tich / (chu_vi_vien * chu_vi_vien)
                     
-                    if do_tron > 0.75:
+                    # NỚI LỎNG: Hạ độ tròn xuống 0.4 để chấp nhận các đốm bị méo thành elip khi chiếu xiên
+                    if do_tron > 0.4:
                         (tam_x, tam_y), _ = cv2.minEnclosingCircle(vien_laser)
                         return int(tam_x), int(tam_y)
                         
@@ -50,7 +50,12 @@ except Exception as e:
 may_anh = cv2.VideoCapture(1)
 if not may_anh.isOpened(): exit()
 
+# --- HIỂN THỊ KÍCH THƯỚC PIXEL CỦA CAMERA ---
+chieu_rong = int(may_anh.get(cv2.CAP_PROP_FRAME_WIDTH))
+chieu_cao = int(may_anh.get(cv2.CAP_PROP_FRAME_HEIGHT))
+print(f"Kích thước Camera: {chieu_rong} x {chieu_cao} pixels")
 print("Đang chờ camera ổn định...")
+
 for _ in range(30): may_anh.read()
 
 # --- BIẾN TOÀN CỤC ---
@@ -59,10 +64,13 @@ trang_thai = "START_GRID_CALIB"
 danh_sach_calib_step = [] 
 du_lieu_ma_tran = []      
 danh_sach_toa_do_tam = [] 
-ma_tran_phoi_canh = None # Ma trận cốt lõi
+ma_tran_phoi_canh = None
 
-# BẠN ĐANG Ở VÙNG AN TOÀN NÊN CHỈ CẦN QUÉT MỘT LƯỚI NHỎ
-# Ví dụ: Từ 0 đến 41 step, mỗi lần nhích 8 step -> Tạo ra lưới 5x5 = 25 điểm
+# Biến lưu sai số
+danh_sach_sai_so = []
+sai_so_hien_tai = None
+
+# Cấu hình lưới Calib
 for sx in range(0, 41, 8):
     for sy in range(0, 36, 7):
         danh_sach_calib_step.append((sx, sy))
@@ -74,16 +82,13 @@ toa_do_laser_cuoi_cung = None
 toa_do_muc_tieu = None
 diem_hien_thi_muc_tieu = None 
 
-# Các biến lưu tọa độ logic ảo hiện tại của motor
 step_hien_tai_X = 0
 step_hien_tai_Y = 0
-last_dir_X = 1
-last_dir_Y = 1
 
 # --- HÀM XỬ LÝ CLICK CHUỘT ---
 def xu_ly_chuot(event, x, y, flags, param):
     global toa_do_muc_tieu, diem_hien_thi_muc_tieu
-    if event == cv2.EVENT_LBUTTONDOWN and (trang_thai == "READY" or trang_thai == "MOVING_TO_TARGET"):
+    if event == cv2.EVENT_LBUTTONDOWN and (trang_thai == "READY" or trang_thai == "MOVING_TO_TARGET" or trang_thai == "STABILIZING_TARGET"):
         toa_do_muc_tieu = (x, y)
         diem_hien_thi_muc_tieu = (x, y)
         print(f">> Nhấp chuột tại: {x}, {y}. Đang tính toán điều hướng...")
@@ -104,8 +109,9 @@ while True:
     if bo_dieu_khien.in_waiting > 0:
         tin_hieu = bo_dieu_khien.readline().decode('utf-8').strip()
 
-    # ================= MÁY TRẠNG THÁI (STATE MACHINE) =================
+    # ================= MÁY TRẠNG THÁI =================
     
+    # 1. QUÁ TRÌNH CALIB
     if trang_thai == "START_GRID_CALIB":
         if len(danh_sach_calib_step) > 0:
             diem_step_hien_tai = danh_sach_calib_step.pop(0)
@@ -124,12 +130,11 @@ while True:
             danh_sach_toa_do_tam = [] 
             
     elif trang_thai == "STABILIZING":
-        # Chờ 0.5 giây để bệ cơ khí bớt rung
         if time.time() - thoi_gian_doi > 0.5:
             if toa_do_laser_hien_tai:
                 danh_sach_toa_do_tam.append(toa_do_laser_hien_tai)
             
-            if len(danh_sach_toa_do_tam) >= 3: # Lấy nhanh 3 frame
+            if len(danh_sach_toa_do_tam) >= 3: 
                 trang_thai = "READ_GRID_CALIB"
 
     elif trang_thai == "READ_GRID_CALIB":
@@ -141,19 +146,16 @@ while True:
         
         trang_thai = "START_GRID_CALIB"
 
-    # PHẦN QUAN TRỌNG: Dùng RANSAC để tính mặt phẳng nghiêng từ lưới điểm an toàn
+    # 2. TÍNH TOÁN MA TRẬN
     elif trang_thai == "CALCULATE_HOMOGRAPHY":
         print("\n>> Đang phân tích mặt phẳng nghiêng bằng RANSAC...")
         
-        # Tách lấy các mảng (Pixel làm Source, Step làm Destination)
         pts_pixel = np.float32([[d[0], d[1]] for d in du_lieu_ma_tran])
         pts_step = np.float32([[d[2], d[3]] for d in du_lieu_ma_tran])
         
-        # Hàm phép màu: Tính Homography từ nhiều điểm, tự động vứt bỏ các điểm bị nhiễu cơ khí
         ma_tran_phoi_canh, mask = cv2.findHomography(pts_pixel, pts_step, cv2.RANSAC, 3.0)
         
         if ma_tran_phoi_canh is not None:
-            # Chốt tọa độ động cơ về mốc cuối cùng nó vừa chạy xong
             step_hien_tai_X = int(pts_step[-1][0])
             step_hien_tai_Y = int(pts_step[-1][1])
             
@@ -164,14 +166,11 @@ while True:
             print(">> LỖI: Dữ liệu quá nhiễu, không thể tính toán mặt phẳng. Vui lòng chạy lại.")
             break
 
-    # ĐIỀU HƯỚNG MỤC TIÊU (NGOẠI SUY VÔ TẬN)
-    elif trang_thai == "READY" or trang_thai == "MOVING_TO_TARGET":
+    # 3. ĐIỀU HƯỚNG MỤC TIÊU VÀ TÍNH SAI SỐ
+    elif trang_thai == "READY" or trang_thai == "MOVING_TO_TARGET" or trang_thai == "STABILIZING_TARGET":
         if toa_do_muc_tieu:
             if ma_tran_phoi_canh is not None:
-                # Chuyển đổi tọa độ click
                 target_px = np.array([[[toa_do_muc_tieu[0], toa_do_muc_tieu[1]]]], dtype=np.float32)
-                
-                # Biến hình qua ma trận nghiêng (Ngoại suy thoải mái)
                 target_step = cv2.perspectiveTransform(target_px, ma_tran_phoi_canh)
                 
                 sent_X = int(target_step[0][0][0])
@@ -179,7 +178,6 @@ while True:
                 
                 print(f">> Click tại {toa_do_muc_tieu} -> Homography tính ra Step: ({sent_X}, {sent_Y})")
                 
-                # Gửi lệnh
                 lenh = f"{sent_X},{sent_Y}\n"
                 bo_dieu_khien.write(lenh.encode())
                 
@@ -187,10 +185,35 @@ while True:
                 toa_do_muc_tieu = None 
 
         if trang_thai == "MOVING_TO_TARGET" and tin_hieu == "DONE":
-            print(">> Đã tới đích! Chờ lệnh click tiếp theo...")
-            trang_thai = "READY"
-            if diem_hien_thi_muc_tieu:
-                toa_do_laser_cuoi_cung = diem_hien_thi_muc_tieu
+            # Đổi trạng thái sang chờ ổn định cơ khí
+            trang_thai = "STABILIZING_TARGET"
+            thoi_gian_doi = time.time()
+
+        elif trang_thai == "STABILIZING_TARGET":
+            thoi_gian_da_qua = time.time() - thoi_gian_doi
+            
+            # Chờ 0.5s cho hệ cơ khí bớt rung rồi mới bắt đầu tìm
+            if thoi_gian_da_qua > 0.5:
+                
+                # Nếu thấy laser -> Chốt luôn tọa độ
+                if toa_do_laser_hien_tai:
+                    dx = toa_do_laser_hien_tai[0] - diem_hien_thi_muc_tieu[0]
+                    dy = toa_do_laser_hien_tai[1] - diem_hien_thi_muc_tieu[1]
+                    sai_so_pixel = math.sqrt(dx**2 + dy**2)
+                    sai_so_hien_tai = round(sai_so_pixel, 2)
+                    danh_sach_sai_so.append(sai_so_pixel)
+                    print(f">> Đã tới đích! Sai số: {sai_so_hien_tai} px")
+                    
+                    trang_thai = "READY"
+                    if diem_hien_thi_muc_tieu:
+                        toa_do_laser_cuoi_cung = diem_hien_thi_muc_tieu
+                
+                # CƠ CHẾ DU DI: Nếu trôi qua 1.5 giây mà vẫn không thấy laser
+                elif thoi_gian_da_qua > 1.5:
+                    sai_so_hien_tai = "-"
+                    print(">> Đã tới đích! Sai số: - (Quá 1.5s không nhận diện được laser)")
+                    
+                    trang_thai = "READY"
 
     # ================= HIỂN THỊ ĐỒ HOẠ =================
     if toa_do_laser_hien_tai:
@@ -206,10 +229,14 @@ while True:
     if "CALIB" in trang_thai or trang_thai == "STABILIZING" or "HOMOGRAPHY" in trang_thai:
         cv2.putText(khung_hinh, f"Dang thu thap ma tran... {trang_thai}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
         cv2.putText(khung_hinh, f"Da luu: {len(du_lieu_ma_tran)} diem", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    
     elif trang_thai == "READY":
         cv2.putText(khung_hinh, "SAN SANG! Click chuot de di chuyen.", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    elif trang_thai == "MOVING_TO_TARGET":
-        cv2.putText(khung_hinh, "Dang di chuyen den muc tieu...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+        if sai_so_hien_tai is not None:
+            cv2.putText(khung_hinh, f"Sai so test truoc: {sai_so_hien_tai} px", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+    elif trang_thai == "MOVING_TO_TARGET" or trang_thai == "STABILIZING_TARGET":
+        cv2.putText(khung_hinh, "Dang di chuyen / on dinh muc tieu...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
     cv2.imshow("He Thong Dieu Huong Laser", khung_hinh)
     
@@ -220,6 +247,19 @@ while True:
     elif phim == ord('r'):
         print(">> Lệnh Reset! Về gốc...")
         bo_dieu_khien.write(b"r\n")
+    elif phim == ord('p'):
+        if danh_sach_sai_so:
+            sai_so_max = round(max(danh_sach_sai_so), 2)
+            sai_so_min = round(min(danh_sach_sai_so), 2)
+            print("\n" + "="*30)
+            print("TỔNG KẾT BÀI TEST")
+            print(f"- Số lần test hợp lệ: {len(danh_sach_sai_so)}")
+            print(f"- Sai số LỚN NHẤT: {sai_so_max} px")
+            print(f"- Sai số NHỎ NHẤT: {sai_so_min} px")
+            print("="*30 + "\n")
+        else:
+            print("\n>> Chưa có dữ liệu test nào thành công để tính sai số max/min.")
+        break
 
 may_anh.release()
 bo_dieu_khien.close()
