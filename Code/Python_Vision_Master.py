@@ -69,6 +69,8 @@ ma_tran_phoi_canh = None
 # Biến lưu sai số
 danh_sach_sai_so = []
 sai_so_hien_tai = None
+sai_so_x = None # THÊM: Lưu sai số trục X
+sai_so_y = None # THÊM: Lưu sai số trục Y
 
 # Cấu hình lưới Calib
 for sx in range(0, 41, 8):
@@ -199,10 +201,15 @@ while True:
                 if toa_do_laser_hien_tai:
                     dx = toa_do_laser_hien_tai[0] - diem_hien_thi_muc_tieu[0]
                     dy = toa_do_laser_hien_tai[1] - diem_hien_thi_muc_tieu[1]
+                    
                     sai_so_pixel = math.sqrt(dx**2 + dy**2)
                     sai_so_hien_tai = round(sai_so_pixel, 2)
+                    sai_so_x = dx
+                    sai_so_y = dy
                     danh_sach_sai_so.append(sai_so_pixel)
-                    print(f">> Đã tới đích! Sai số: {sai_so_hien_tai} px")
+                    
+                    # THÊM: In kết quả chi tiết X và Y
+                    print(f">> Đã tới đích! Sai số: {sai_so_hien_tai} px (X = {dx}; Y = {dy})")
                     
                     trang_thai = "READY"
                     if diem_hien_thi_muc_tieu:
@@ -211,6 +218,8 @@ while True:
                 # CƠ CHẾ DU DI: Nếu trôi qua 1.5 giây mà vẫn không thấy laser
                 elif thoi_gian_da_qua > 1.5:
                     sai_so_hien_tai = "-"
+                    sai_so_x = "-"
+                    sai_so_y = "-"
                     print(">> Đã tới đích! Sai số: - (Quá 1.5s không nhận diện được laser)")
                     
                     trang_thai = "READY"
@@ -233,7 +242,12 @@ while True:
     elif trang_thai == "READY":
         cv2.putText(khung_hinh, "SAN SANG! Click chuot de di chuyen.", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         if sai_so_hien_tai is not None:
-            cv2.putText(khung_hinh, f"Sai so test truoc: {sai_so_hien_tai} px", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # THÊM: Cập nhật hiển thị text trên video
+            if sai_so_hien_tai == "-":
+                txt_sai_so = "Sai so test truoc: -"
+            else:
+                txt_sai_so = f"Sai so test truoc: {sai_so_hien_tai} px (X={sai_so_x}, Y={sai_so_y})"
+            cv2.putText(khung_hinh, txt_sai_so, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
     elif trang_thai == "MOVING_TO_TARGET" or trang_thai == "STABILIZING_TARGET":
         cv2.putText(khung_hinh, "Dang di chuyen / on dinh muc tieu...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
